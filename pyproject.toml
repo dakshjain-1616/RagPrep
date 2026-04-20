@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ragprep"
+version = "0.1.0"
+description = "A RAG-prep pipeline built on top of microsoft/markitdown"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "RAGPrep Team"}
+]
+keywords = ["rag", "markitdown", "embeddings", "chromadb", "vector-search"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "markitdown>=0.1.0",
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "click>=8.0.0",
+    "pydantic>=2.0.0",
+    "numpy>=1.24.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "httpx>=0.24.0",
+    "black>=23.0.0",
+    "mypy>=1.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+ragprep = "ragprep.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dakshjain-1616/ragprep"
+Repository = "https://github.com/dakshjain-1616/ragprep"
+Issues = "https://github.com/dakshjain-1616/ragprep/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ragprep*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312']
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "W"]
+ignore = []
