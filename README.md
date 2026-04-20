@@ -4,348 +4,77 @@
 >
 > [![VS Code Extension](https://img.shields.io/badge/VS%20Code-NEO%20Extension-blue?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=NeoResearchInc.heyneo)  [![Cursor Extension](https://img.shields.io/badge/Cursor-NEO%20Extension-purple?logo=cursor)](https://marketplace.cursorapi.com/items/?itemName=NeoResearchInc.heyneo)
 
-## Architecture
-
-![Architecture](architecture.svg)
-
-A full RAG-prep pipeline built on top of `microsoft/markitdown` that converts any folder of mixed-format documents into a queryable ChromaDB vector store in one CLI command.
-
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## Features
+Point it at a folder of mixed-format documents. Get back a queryable vector store. One command, under five minutes, no OpenAI key required.
 
-- **📄 Universal Document Support**: PDF, DOCX, PPTX, XLSX, images (with OCR), audio (transcription), HTML, and text files
-- **🧠 Smart Chunking**: Heading-aware splitting, table-preserving chunking, sliding window with overlap
-- **🔒 Local Embeddings**: Uses `sentence-transformers` - no OpenAI key needed
-- **💾 Incremental Updates**: Only re-processes files that changed (file hash tracking)
-- **⚡ FastAPI Server**: OpenAI-compatible `/v1/embeddings` endpoint
-- **🔍 Semantic Search**: Cosine similarity search with metadata filtering
+![Architecture](architecture.svg)
 
-## Installation
+## The Problem Everyone Rebuilds From Scratch
 
-```bash
-# Clone the repository
-git clone https://github.com/dakshjain-1616/ragprep.git
-cd ragprep
+Every retrieval-augmented-generation project begins with the same three weeks of unpaid boilerplate:
 
-# Install dependencies
-pip install -r requirements.txt
+- Write a PDF parser. Discover the PDF has two columns. Rewrite the PDF parser.
+- Handle DOCX. Realise your text extractor destroys tables. Handle tables separately.
+- Try PPTX. Give up on PPTX.
+- Read three blog posts about chunking strategy. Pick one. Later discover it split a table in half.
+- Wire up an embedding model. Forget whether it needs normalised vectors. Debug for an hour.
+- Pick a vector database. Read its docs. Build an ingestion script. Realise it re-embeds every document on every run. Add a hash tracker. Get the hash logic subtly wrong.
 
-# Or install as a package
-pip install -e .
-```
+At the end of all of this you have built a document ingestion pipeline that barely works and has nothing to do with the product you wanted to ship.
 
-### Requirements
+Microsoft's [`markitdown`](https://github.com/microsoft/markitdown) — 3,600 GitHub stars in April 2026 — solved the parsing half of that list. It takes any file format (PDF, DOCX, PPTX, XLSX, images, audio, HTML) and produces clean Markdown. **RAGPrep wires the rest together.** It takes `markitdown`'s output, chunks it intelligently, embeds it locally, indexes it into ChromaDB, tracks file hashes for incremental updates, and exposes both a CLI and an OpenAI-compatible HTTP endpoint on top.
 
-- Python 3.10+
-- See `requirements.txt` for package dependencies
+## Why The Chunking Actually Matters
 
-## Quick Start
+Cheap chunking is the silent killer of RAG quality. Most tutorials teach a fixed-character-count sliding window, which is the equivalent of cutting a book into pages with scissors every 500 characters. Retrieve a chunk and you get half a sentence, a truncated table row, and a heading that belongs to the next section.
 
-### 1. Ingest Documents
+RAGPrep's chunker is Markdown-aware by design:
 
-```bash
-# Ingest a directory of documents
-ragprep ingest ./my_documents/
+- **Heading-aware splitting.** A section and its heading stay together. Retrieval surfaces the context the heading provides, not an orphaned paragraph.
+- **Table-preserving chunking.** A Markdown table is never split mid-row. Either the whole table is in the chunk or none of it is. Half a table is worse than no table.
+- **Sliding window with overlap** for dense prose where heading boundaries are sparse, so no fact falls across a chunk boundary without being fully present on one side.
 
-# With options
-ragprep ingest ./docs/ --collection my_docs --model all-mpnet-base-v2
-```
+The result is that retrieval returns passages a language model can actually use, not fragments it has to stitch back together.
 
-### 2. Query Documents
+## Local By Default
 
-```bash
-# Search the indexed documents
-ragprep query "what is machine learning?"
+RAGPrep never calls a paid API unless you explicitly configure it to. Embeddings run through `sentence-transformers` locally (`all-MiniLM-L6-v2` by default — fast, 384 dimensions, good enough for almost every use case; swap in `all-mpnet-base-v2` if you want higher quality). Storage is ChromaDB, running in local mode. File-hash tracking lives in a SQLite file next to the vector store.
 
-# With options
-ragprep query "API documentation" -n 10 --format detailed
-```
+That design choice is deliberate. If you are indexing internal documents — contracts, research, customer data — shipping every page to OpenAI's embedding endpoint to then query your own corpus is a strange thing to agree to, and RAGPrep makes it unnecessary.
 
-### 3. Start Server
+## Incremental Updates That Actually Work
 
-```bash
-# Start the FastAPI server
-ragprep serve
+The hash tracker records the SHA of every file at ingest time. Run `ragprep ingest` again and it only re-processes files whose contents changed. Point it at a 10,000-document folder where ten files were edited and it does ten files of work, not ten thousand. Files deleted from the source directory can optionally be removed from the index with `--delete-missing`.
 
-# With custom port
-ragprep serve --port 8080
-```
+This is the feature that turns RAGPrep from a one-shot ingestion script into something you can run on a cron.
 
-### 4. Check Status
+## Two Ways To Use It
 
-```bash
-# Show statistics
-ragprep status
-```
+**As a CLI.** Four commands cover the lifecycle — `ingest`, `query`, `serve`, `status` — each with sensible defaults. `ragprep ingest ./docs/` is usually all you need on day one.
 
-## CLI Reference
+**As a FastAPI server.** `ragprep serve` exposes an OpenAI-compatible `/v1/embeddings` endpoint and a `/v1/search` endpoint. Any RAG application that already speaks to OpenAI's embeddings API can point at RAGPrep instead with a base-URL change — no client rewrite required.
 
-### `ragprep ingest`
+There is also a Python API (`IngestPipeline`, `QueryEngine`, `StorageManager`, `DocumentConverter`, `MarkdownChunker`, `HashTracker`) for projects that want to embed the pipeline directly.
 
-Convert and index documents from a directory.
+## When To Reach For It
 
-```bash
-ragprep ingest [OPTIONS] SOURCE_DIR
+You want RAGPrep when you have a folder of mixed-format documents and you need a retrieval layer, now, without spending the first month of the project writing parsers. You want it when you cannot or will not ship your documents to a third-party embedding API. You want it when your corpus changes and you need incremental reindexing rather than a full rebuild every night.
 
-Options:
-  -c, --collection TEXT    Collection name [default: ragprep_docs]
-  -m, --model TEXT         Embedding model [default: all-MiniLM-L6-v2]
-  -s, --chunk-size INTEGER Target chunk size [default: 500]
-  -o, --chunk-overlap INTEGER Chunk overlap [default: 50]
-  -f, --force              Force re-processing of all files
-  --delete-missing         Remove chunks for files no longer in source
-  --progress / --no-progress Show progress bar [default: True]
-  --help                   Show help
-```
+You do not want RAGPrep if your corpus is already clean Markdown and you are happy with hosted embeddings — at that point you are paying for complexity you do not need.
 
-### `ragprep query`
+## Tech Stack
 
-Search the indexed documents.
-
-```bash
-ragprep query [OPTIONS] QUERY_TEXT
-
-Options:
-  -c, --collection TEXT    Collection name [default: ragprep_docs]
-  -n, --n-results INTEGER  Number of results [default: 5]
-  -f, --format [simple|detailed|markdown|json] Output format [default: simple]
-  --min-score FLOAT        Minimum similarity score threshold (0-1)
-  -l, --max-length INTEGER Maximum content length per result [default: 500]
-  --help                   Show help
-```
-
-### `ragprep serve`
-
-Start the FastAPI server.
-
-```bash
-ragprep serve [OPTIONS]
-
-Options:
-  --host TEXT              Host to bind to [default: 0.0.0.0]
-  -p, --port INTEGER       Port to bind to [default: 8000]
-  -c, --collection TEXT    Collection name [default: ragprep_docs]
-  --reload                 Enable auto-reload (development)
-  --help                   Show help
-```
-
-### `ragprep status`
-
-Show statistics about indexed documents.
-
-```bash
-ragprep status [OPTIONS]
-
-Options:
-  -c, --collection TEXT    Collection name [default: ragprep_docs]
-  --help                   Show help
-```
-
-## API Reference
-
-### Server Endpoints
-
-#### Health Check
-
-```bash
-GET /health
-```
-
-Returns server status and collection statistics.
-
-#### Embeddings (OpenAI-compatible)
-
-```bash
-POST /v1/embeddings
-Content-Type: application/json
-
-{
-  "input": "text to embed",
-  "model": "ragprep-default"
-}
-```
-
-Compatible with OpenAI's `/v1/embeddings` API.
-
-#### Search
-
-```bash
-POST /v1/search
-Content-Type: application/json
-
-{
-  "query": "search query",
-  "n_results": 5,
-  "min_score": 0.7,
-  "filter": {"chunk_type": "paragraph"}
-}
-```
-
-## Python API
-
-### Basic Usage
-
-```python
-from ragprep.ingest import IngestPipeline
-from ragprep.query import QueryEngine
-from ragprep.storage import StorageManager
-
-# Create pipeline
-pipeline = IngestPipeline(
-    data_dir="./data",
-    collection_name="my_docs"
-)
-
-# Ingest documents
-result = pipeline.ingest("./documents/")
-print(f"Created {result.total_chunks} chunks")
-
-# Query
-storage = StorageManager(
-    chroma_path="./data/chroma",
-    collection_name="my_docs"
-)
-engine = QueryEngine(storage)
-results = engine.search("machine learning", n_results=5)
-
-for result in results:
-    print(f"{result.score:.3f}: {result.content[:100]}...")
-```
-
-### Advanced Usage
-
-```python
-from ragprep.converter import DocumentConverter
-from ragprep.chunker import MarkdownChunker
-from ragprep.storage import StorageManager, HashTracker
-
-# Convert single file
-converter = DocumentConverter()
-result = converter.convert("document.pdf")
-print(result.markdown)
-
-# Chunk with custom settings
-chunker = MarkdownChunker(
-    chunk_size=1000,
-    chunk_overlap=100,
-    preserve_tables=True
-)
-chunks = chunker.chunk(markdown_text)
-
-# Track file hashes
-tracker = HashTracker("./data/ragprep.db")
-if tracker.needs_update("document.pdf"):
-    # Process file...
-    tracker.record_file("document.pdf", file_hash, chunk_count=10)
-```
-
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Source Files   │────▶│  Converter   │────▶│  Markdown   │
-│ (PDF,DOCX,etc)  │     │ (markitdown) │     │    Text     │
-└─────────────────┘     └──────────────┘     └──────┬──────┘
-                                                    │
-                       ┌────────────────────────────┘
-                       ▼
-              ┌─────────────────┐
-              │     Chunker     │
-              │  (heading-aware,│
-              │ table-preserving)│
-              └────────┬────────┘
-                       │
-       ┌───────────────┼───────────────┐
-       ▼               ▼               ▼
-┌────────────┐  ┌────────────┐  ┌────────────┐
-│   SQLite   │  │ ChromaDB   │  │Embeddings  │
-│(file hashes)│  │ (vectors)  │  │(sentence-  │
-└────────────┘  └────────────┘  │transformers)│
-                                └────────────┘
-```
-
-## Smart Chunking
-
-RAGPrep uses intelligent chunking strategies:
-
-1. **Heading-Aware**: Never cuts between a heading and its content
-2. **Table-Preserving**: Never splits a Markdown table mid-row
-3. **Sliding Window**: Configurable overlap for dense prose
-
-```python
-chunker = MarkdownChunker(
-    chunk_size=500,      # Target chunk size in characters
-    chunk_overlap=50,    # Overlap between chunks
-    min_chunk_size=100   # Minimum chunk size
-)
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-RAGPREP_DATA_DIR=./data          # Data directory
-RAGPREP_COLLECTION=ragprep_docs  # Default collection
-RAGPREP_HOST=0.0.0.0            # Server host
-RAGPREP_PORT=8000               # Server port
-```
-
-### Embedding Models
-
-Default: `all-MiniLM-L6-v2` (384 dimensions, fast)
-
-Alternatives:
-- `all-mpnet-base-v2` (768 dimensions, higher quality)
-- `multi-qa-MiniLM-L6-cos-v1` (optimized for semantic search)
-
-## Examples
-
-Runnable example scripts are included at the project root:
-
-- `basic_ingest.py` - Ingest documents programmatically
-- `query_example.py` - Query with different output formats
-
-```bash
-# Run examples
-python basic_ingest.py ./documents/
-python query_example.py "your query"
-python query_example.py --interactive
-```
-
-## Development
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest tests/
-
-# Format code
-black ragprep/
-ruff check ragprep/
-```
+Python 3.10+, `markitdown` for document conversion, `sentence-transformers` for local embeddings, ChromaDB for the vector store, SQLite for hash tracking, and FastAPI for the server. Install from `requirements.txt` or `pip install -e .`
 
 ## License
 
-MIT License - see LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
+MIT.
 
 ## Acknowledgments
 
-- [microsoft/markitdown](https://github.com/microsoft/markitdown) - Document conversion
-- [sentence-transformers](https://www.sbert.net/) - Local embeddings
-- [ChromaDB](https://www.trychroma.com/) - Vector storage
-- [FastAPI](https://fastapi.tiangolo.com/) - API framework
+- [microsoft/markitdown](https://github.com/microsoft/markitdown) for the document conversion layer this project stands on
+- [sentence-transformers](https://www.sbert.net/) for the local embedding models
+- [ChromaDB](https://www.trychroma.com/) for the vector store
+- [FastAPI](https://fastapi.tiangolo.com/) for the HTTP layer
